@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-montserrat);
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-montserrat), Arial, Helvetica, sans-serif;
+  margin: 0;
+  min-height: 100%;
+  min-height: 100dvh;
+}
+
+/* iOS Safari: match visible viewport so body does not leave white bands above/below full-bleed pages */
+@supports (-webkit-touch-callout: none) {
+  body {
+    min-height: -webkit-fill-available;
+  }
+}
+
+/* Hide native search clear (blue X) when using custom SVG clear */
+.hide-search-cancel::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+  display: none;
+}
+
+@keyframes slide-up-sheet {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+.animate-slide-up-sheet {
+  animation: slide-up-sheet 0.25s ease-out;
+}
+
+/* Notifications full-page enter: mobile L→R, desktop top→down */
+@keyframes notif-enter-mobile {
+  from {
+    transform: translateX(-100%);
+    opacity: 0.85;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+@keyframes notif-enter-desktop {
+  from {
+    transform: translateY(-24px);
+    opacity: 0.85;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+.animate-notif-enter {
+  animation: notif-enter-mobile 0.38s ease-out both;
+}
+@media (min-width: 640px) {
+  .animate-notif-enter {
+    animation-name: notif-enter-desktop;
+  }
+}
+
+@keyframes notif-dot-blink {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.25;
+    transform: scale(1.1);
+  }
+}
+.notif-dot-pulse {
+  animation: notif-dot-blink 0.42s ease-in-out 3;
+}
+
+@media (max-width: 639px) {
+  .site-footer,
+  .mobile-footer-dropdown {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  body.has-mobile-bottom-nav .site-footer,
+  body.has-mobile-bottom-nav .mobile-footer-dropdown {
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+}

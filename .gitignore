@@ -1,0 +1,48 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets — real env files only (templates stay tracked)
+/.env
+/.env.local
+backend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+*.pem
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/coverage/
+frontend/.turbo/
+frontend/.vercel/
+
+# Logs & debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# TypeScript
+frontend/*.tsbuildinfo
+
+# Go backend
+backend/bin/
+backend/server
+backend/tmp/
+*.exe
+*.test
+*.out
+
+# Local backup of nested frontend/.git (never commit)
+_backup_nested_frontend_git/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
