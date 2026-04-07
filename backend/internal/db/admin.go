@@ -127,13 +127,12 @@ func (d *DB) GetAdminStats(ctx context.Context) (*AdminStats, error) {
 			SELECT
 				vu.id AS vendor_user_id,
 				COALESCE(vv.review_status, 'pending') AS review_status,
-				COALESCE(
-					vv.step_status,
-					CASE WHEN vc.vouch_count >= $1 THEN 'completed' ELSE 'pending' END
-				) AS step_status,
+				COALESCE(vs.step_status, 'pending') AS verification_step_status,
+				COALESCE(vs.admin_kyc_decision, '') AS admin_kyc_decision,
 				vc.vouch_count
 			FROM vendor_users vu
 			LEFT JOIN vendor_vouch_step vv ON vv.vendor_user_id = vu.id
+			LEFT JOIN vendor_verification_step vs ON vs.vendor_user_id = vu.id
 			LEFT JOIN (
 				SELECT vendor_user_id, COUNT(1) AS vouch_count
 				FROM vendor_vouch_entries
@@ -141,7 +140,8 @@ func (d *DB) GetAdminStats(ctx context.Context) (*AdminStats, error) {
 			) vc ON vc.vendor_user_id = vu.id
 		) q
 		WHERE q.review_status = 'pending'
-		  AND (q.step_status = 'completed' OR COALESCE(q.vouch_count, 0) >= $1)
+		  AND q.verification_step_status = 'completed'
+		  AND q.admin_kyc_decision <> 'needs_resubmit'
 	`, VouchTarget); err != nil {
 		return nil, err
 	}
@@ -257,6 +257,7 @@ func (d *DB) ListVouchReviewQueue(ctx context.Context) ([]AdminVouchQueueRow, er
 			) AS step_status
 		FROM vendor_users vu
 		LEFT JOIN vendor_vouch_step vv ON vv.vendor_user_id = vu.id
+		LEFT JOIN vendor_verification_step vs ON vs.vendor_user_id = vu.id
 		LEFT JOIN vendor_profile_step vp ON vp.vendor_user_id = vu.id
 		LEFT JOIN (
 			SELECT vendor_user_id, COUNT(1) AS vouch_count
@@ -264,13 +265,8 @@ func (d *DB) ListVouchReviewQueue(ctx context.Context) ([]AdminVouchQueueRow, er
 			GROUP BY vendor_user_id
 		) vc ON vc.vendor_user_id = vu.id
 		WHERE COALESCE(vv.review_status, 'pending') = 'pending'
-		  AND (
-		    COALESCE(
-		    	vv.step_status,
-		    	CASE WHEN COALESCE(vc.vouch_count, 0) >= $1 THEN 'completed' ELSE 'pending' END
-		    ) = 'completed'
-		    OR COALESCE(vc.vouch_count, 0) >= $1
-		  )
+		  AND COALESCE(vs.step_status, 'pending') = 'completed'
+		  AND COALESCE(vs.admin_kyc_decision, '') <> 'needs_resubmit'
 		ORDER BY vu.id DESC
 	`, VouchTarget)
 	return rows, err

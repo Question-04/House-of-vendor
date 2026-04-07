@@ -30,6 +30,8 @@ type Entry = {
   createdAt: string;
 };
 
+const VOUCH_TARGET = 30;
+
 export default function AdminVouchPage() {
   const [items, setItems] = useState<Item[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -93,7 +95,9 @@ export default function AdminVouchPage() {
   return (
     <div>
       <h1 className={adminPageTitle}>Vouch queue</h1>
-      <p className={adminPageLead}>Vendors at 30 vouches pending team review (replaces dev-only /api/dev/vouch/review).</p>
+      <p className={adminPageLead}>
+        All pending vouch users. Under 30 vouches can be directly allowed by admin; 30+ keeps full review actions.
+      </p>
       {err ? <p className="mt-4 text-sm text-red-600">{err}</p> : null}
       {msg ? <p className="mt-4 text-sm text-emerald-700">{msg}</p> : null}
       <div className="mt-6 space-y-4">
@@ -122,24 +126,28 @@ export default function AdminVouchPage() {
                   onClick={() => void review(it.phone, "approve")}
                   className={adminBtnSuccessStrong}
                 >
-                  Approve
+                  {it.vouchCount < VOUCH_TARGET ? "Allow" : "Approve"}
                 </button>
-                <button
-                  type="button"
-                  disabled={!!busy}
-                  onClick={() => void review(it.phone, "disapprove")}
-                  className={adminBtnDanger}
-                >
-                  Disapprove
-                </button>
-                <button
-                  type="button"
-                  disabled={!!busy}
-                  onClick={() => void review(it.phone, "needs_resubmit")}
-                  className={adminBtnAmberOutline}
-                >
-                  Need resubmission
-                </button>
+                {it.vouchCount >= VOUCH_TARGET ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={!!busy}
+                      onClick={() => void review(it.phone, "disapprove")}
+                      className={adminBtnDanger}
+                    >
+                      Disapprove
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!!busy}
+                      onClick={() => void review(it.phone, "needs_resubmit")}
+                      className={adminBtnAmberOutline}
+                    >
+                      Need resubmission
+                    </button>
+                  </>
+                ) : null}
                 <button
                   type="button"
                   disabled={!!busy}
