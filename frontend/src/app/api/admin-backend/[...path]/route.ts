@@ -1,7 +1,8 @@
 import { SignJWT } from "jose";
 import { getServerSession } from "next-auth/next";
 import { NextRequest, NextResponse } from "next/server";
-import { authOptions, isAdminPhoneAllowed } from "@/lib/auth-options";
+import { authOptions } from "@/lib/auth-options";
+import { isAdminPhoneAllowed } from "@/lib/admin-allowlist";
 
 const defaultApi = "http://localhost:8080";
 

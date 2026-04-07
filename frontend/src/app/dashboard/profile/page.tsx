@@ -172,7 +172,7 @@ export default function ProfilePage() {
     if (!phone) return;
     void (async () => {
       try {
-        const res = await fetch(`/api/admin-visibility?phone=${encodeURIComponent(phone)}`);
+        const res = await fetch("/api/admin-visibility", { cache: "no-store" });
         const data = (await res.json()) as { allowed?: boolean };
         setAdminVisible(Boolean(data?.allowed));
       } catch {

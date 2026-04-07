@@ -3,10 +3,11 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getSession, signIn } from "next-auth/react";
+import { getSession, signIn, useSession } from "next-auth/react";
 import { loadMSG91Widget, normalizePhone } from "@/lib/msg91-widget";
 import type { MSG91VerifySuccess } from "@/types/msg91";
 import { useTheme } from "@/contexts/theme-context";
+import { isAdminPhoneAllowed } from "@/lib/admin-allowlist";
 
 const OTP_LENGTH = 6;
 
@@ -30,6 +31,7 @@ function getReqIdFromWidgetData(data: unknown): string {
 export default function AdminSignInPage() {
   const router = useRouter();
   const { isDark, toggleTheme } = useTheme();
+  const { data: session, status } = useSession();
 
   const [phone, setPhone] = useState("");
   const normalizedPhone = useMemo(() => normalizePhone(phone), [phone]);
@@ -53,6 +55,15 @@ export default function AdminSignInPage() {
 
   const widgetId = process.env.NEXT_PUBLIC_MSG91_WIDGET_ID ?? "";
   const tokenAuth = process.env.NEXT_PUBLIC_MSG91_TOKEN_AUTH ?? "";
+
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    const phone = session?.user?.phone;
+    if (isAdminPhoneAllowed(phone)) {
+      router.replace("/admin");
+      router.refresh();
+    }
+  }, [router, session?.user?.phone, status]);
 
   useEffect(() => {
     if (!widgetId || !tokenAuth) {

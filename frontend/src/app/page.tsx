@@ -3,8 +3,10 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { signIn } from "next-auth/react";
 import { MultiCategorySelectLight } from "@/components/multi-category-select";
 import { saveProfile, verifyToken } from "@/lib/api";
+import { isAdminPhoneAllowed } from "@/lib/admin-allowlist";
 import { PRIMARY_SELLING_CATEGORY_OPTIONS } from "@/lib/vendor-categories";
 import { setOnboardingPhone } from "@/lib/onboarding-session";
 import { loadMSG91Widget, normalizePhone } from "@/lib/msg91-widget";
@@ -115,6 +117,15 @@ function getReqIdFromWidgetData(data: unknown): string {
   const record = data as Record<string, unknown>;
   const value = record.reqId ?? record.request_id ?? record.requestId;
   return typeof value === "string" ? value : "";
+}
+
+async function syncAdminSessionIfNeeded(phone: string, accessToken: string): Promise<void> {
+  if (!isAdminPhoneAllowed(phone)) return;
+  await signIn("credentials", {
+    phone,
+    accessToken,
+    redirect: false,
+  });
 }
 
 function ProgressStep({
@@ -391,6 +402,9 @@ export default function VendorLoginPage() {
         setVerifyPhase("server");
         try {
           const result = await verifyToken(token, normalizedPhone);
+          if (result.success) {
+            await syncAdminSessionIfNeeded(normalizedPhone, token);
+          }
           if (result.success && (!result.nextStep || result.nextStep === "profile")) {
             setOnboardingPhone(normalizedPhone);
             setStep("verified");

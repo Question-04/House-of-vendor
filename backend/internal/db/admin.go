@@ -142,7 +142,7 @@ func (d *DB) GetAdminStats(ctx context.Context) (*AdminStats, error) {
 		WHERE q.review_status = 'pending'
 		  AND q.verification_step_status = 'completed'
 		  AND q.admin_kyc_decision <> 'needs_resubmit'
-	`, VouchTarget); err != nil {
+	`); err != nil {
 		return nil, err
 	}
 	if err := d.db.GetContext(ctx, &s.OpenTickets, `
