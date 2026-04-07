@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -162,12 +163,16 @@ func (d *DB) ensureStepRows(ctx context.Context, vendorUserID int64) error {
 
 func (d *DB) getStatusByUserID(ctx context.Context, vendorUserID int64) (*OnboardingStatus, error) {
 	var profileStatus, verificationStatus, vouchStatus, vouchReviewStatus string
+	var adminKycDecision sql.NullString
 	var reapplyAfter sql.NullTime
 
 	if err := d.db.GetContext(ctx, &profileStatus, `SELECT step_status FROM vendor_profile_step WHERE vendor_user_id = $1`, vendorUserID); err != nil {
 		return nil, err
 	}
 	if err := d.db.GetContext(ctx, &verificationStatus, `SELECT step_status FROM vendor_verification_step WHERE vendor_user_id = $1`, vendorUserID); err != nil {
+		return nil, err
+	}
+	if err := d.db.GetContext(ctx, &adminKycDecision, `SELECT admin_kyc_decision FROM vendor_verification_step WHERE vendor_user_id = $1`, vendorUserID); err != nil {
 		return nil, err
 	}
 	if err := d.db.GetContext(ctx, &vouchStatus, `SELECT step_status FROM vendor_vouch_step WHERE vendor_user_id = $1`, vendorUserID); err != nil {
@@ -182,10 +187,13 @@ func (d *DB) getStatusByUserID(ctx context.Context, vendorUserID int64) (*Onboar
 	}
 
 	nextStep := NextStepProfile
+	kycDecision := strings.TrimSpace(strings.ToLower(adminKycDecision.String))
 	switch {
 	case profileStatus != string(StepCompleted):
 		nextStep = NextStepProfile
 	case verificationStatus != string(StepCompleted):
+		nextStep = NextStepVerification
+	case kycDecision == "needs_resubmit":
 		nextStep = NextStepVerification
 	case vouchStatus != string(StepCompleted):
 		nextStep = NextStepGetVouch

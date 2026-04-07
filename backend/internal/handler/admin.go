@@ -275,12 +275,20 @@ func (h *AdminHandler) handleVouchReview(w http.ResponseWriter, r *http.Request,
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "message": "phone required"})
 		return
 	}
-	_, err := h.db.SetVouchReviewDecisionByPhone(ctx, phone, body.Decision, 90)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "message": "Could not apply decision"})
-		return
+	decision := strings.TrimSpace(strings.ToLower(body.Decision))
+	switch decision {
+	case "needs_resubmit":
+		if err := h.db.AdminRequestKYCResubmissionByPhone(ctx, phone); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "message": "Could not mark resubmission"})
+			return
+		}
+	default:
+		if _, err := h.db.SetVouchReviewDecisionByPhone(ctx, phone, decision, 90); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "message": "Could not apply decision"})
+			return
+		}
 	}
-	_ = h.db.InsertAdminAudit(ctx, actor, "vouch_review", "vouch", phone, map[string]interface{}{"decision": body.Decision})
+	_ = h.db.InsertAdminAudit(ctx, actor, "vouch_review", "vouch", phone, map[string]interface{}{"decision": decision})
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 

@@ -237,10 +237,57 @@ func (d *DB) ListVouchReviewQueue(ctx context.Context) ([]AdminVouchQueueRow, er
 		FROM vendor_vouch_step vv
 		INNER JOIN vendor_users vu ON vu.id = vv.vendor_user_id
 		LEFT JOIN vendor_profile_step vp ON vp.vendor_user_id = vv.vendor_user_id
-		WHERE vv.step_status = 'completed' AND vv.review_status = 'pending'
+		WHERE vv.step_status = 'completed'
+		  AND vv.review_status = 'pending'
 		ORDER BY vu.id DESC
 	`)
 	return rows, err
+}
+
+// AdminRequestKYCResubmissionByPhone sends vendor back to verification and clears vouch progress.
+func (d *DB) AdminRequestKYCResubmissionByPhone(ctx context.Context, phone string) error {
+	user, err := d.GetUserByPhone(ctx, phone)
+	if err != nil {
+		return err
+	}
+	if err := d.ensureStepRows(ctx, user.ID); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	tx, err := d.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM vendor_vouch_entries WHERE vendor_user_id = $1`, user.ID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE vendor_verification_step
+		SET step_status = $2,
+			admin_kyc_decision = 'needs_resubmit',
+			admin_kyc_reviewed_at = $3,
+			completed_at = NULL,
+			submitted_at = NULL,
+			updated_at = $3
+		WHERE vendor_user_id = $1
+	`, user.ID, StepPending, now); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE vendor_vouch_step
+		SET step_status = $2,
+			review_status = 'pending',
+			review_decided_at = NULL,
+			reapply_after = NULL,
+			completed_at = NULL,
+			updated_at = $3
+		WHERE vendor_user_id = $1
+	`, user.ID, StepPending, now); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ListAllSupportTickets returns tickets across all vendors (newest first).

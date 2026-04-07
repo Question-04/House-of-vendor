@@ -4,9 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import { adminFetchJson } from "@/lib/admin-fetch";
 import {
   adminBtnOutline,
-  adminBtnSuccessStrong,
-  adminBtnWarning,
-  adminBtnDanger,
   adminPageLead,
   adminPageTitle,
 } from "@/lib/admin-ui";
@@ -55,27 +52,10 @@ export default function AdminVerificationPage() {
     }
   }
 
-  async function review(phone: string, decision: "approved" | "rejected" | "needs_resubmit") {
-    setBusy(phone);
-    setMsg("");
-    try {
-      await adminFetchJson("verification/review", {
-        method: "POST",
-        body: JSON.stringify({ phone, decision, notes: "" }),
-      });
-      setMsg("Saved.");
-      await load();
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : "Failed");
-    } finally {
-      setBusy("");
-    }
-  }
-
   return (
     <div>
       <h1 className={adminPageTitle}>Verification queue</h1>
-      <p className={adminPageLead}>Submitted KYC awaiting admin decision (presigned R2 links).</p>
+      <p className={adminPageLead}>Submitted KYC documents. Final approve/disapprove happens in the Vouch queue.</p>
       {err ? <p className="mt-4 text-sm text-red-600">{err}</p> : null}
       {msg ? <p className="mt-4 text-sm text-emerald-700">{msg}</p> : null}
       <div className="mt-6 space-y-4">
@@ -112,30 +92,6 @@ export default function AdminVerificationPage() {
                     {busy === `${it.phone}-pan-${i}` ? "…" : it.panDocCount && it.panDocCount > 1 ? `PAN ${i + 1}` : "View PAN"}
                   </button>
                 ))}
-                <button
-                  type="button"
-                  disabled={!!busy}
-                  onClick={() => void review(it.phone, "approved")}
-                  className={adminBtnSuccessStrong}
-                >
-                  Approve KYC
-                </button>
-                <button
-                  type="button"
-                  disabled={!!busy}
-                  onClick={() => void review(it.phone, "needs_resubmit")}
-                  className={adminBtnWarning}
-                >
-                  Needs resubmit
-                </button>
-                <button
-                  type="button"
-                  disabled={!!busy}
-                  onClick={() => void review(it.phone, "rejected")}
-                  className={adminBtnDanger}
-                >
-                  Reject
-                </button>
               </div>
             </div>
           </div>

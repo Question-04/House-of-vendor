@@ -57,7 +57,7 @@ export default function AdminVouchPage() {
     setEntries(res.entries || []);
   }
 
-  async function review(phone: string, decision: "approve" | "disapprove") {
+  async function review(phone: string, decision: "approve" | "disapprove" | "needs_resubmit") {
     setBusy(phone);
     setMsg("");
     try {
@@ -65,7 +65,7 @@ export default function AdminVouchPage() {
         method: "POST",
         body: JSON.stringify({ phone, decision }),
       });
-      setMsg("Review saved.");
+      setMsg(decision === "needs_resubmit" ? "Marked for KYC resubmission." : "Review saved.");
       await load();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "Failed");
@@ -131,6 +131,14 @@ export default function AdminVouchPage() {
                   className={adminBtnDanger}
                 >
                   Disapprove
+                </button>
+                <button
+                  type="button"
+                  disabled={!!busy}
+                  onClick={() => void review(it.phone, "needs_resubmit")}
+                  className={adminBtnAmberOutline}
+                >
+                  Need resubmission
                 </button>
                 <button
                   type="button"
