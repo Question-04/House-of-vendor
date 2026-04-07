@@ -3,6 +3,7 @@ export async function adminFetchJson<T>(path: string, init?: RequestInit): Promi
   const url = `/api/admin-backend/${path.replace(/^\//, "")}`;
   const res = await fetch(url, {
     ...init,
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
       ...init?.headers,

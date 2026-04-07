@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { signIn } from "next-auth/react";
+import { getSession, signIn } from "next-auth/react";
 import { loadMSG91Widget, normalizePhone } from "@/lib/msg91-widget";
 import type { MSG91VerifySuccess } from "@/types/msg91";
 import { useTheme } from "@/contexts/theme-context";
@@ -49,6 +49,7 @@ export default function AdminSignInPage() {
 
   const [otpRequestId, setOtpRequestId] = useState<string | undefined>(undefined);
   const [resendCountdown, setResendCountdown] = useState(0);
+  const verifyInFlightRef = useRef(false);
 
   const widgetId = process.env.NEXT_PUBLIC_MSG91_WIDGET_ID ?? "";
   const tokenAuth = process.env.NEXT_PUBLIC_MSG91_TOKEN_AUTH ?? "";
@@ -172,7 +173,7 @@ export default function AdminSignInPage() {
     };
 
     if (window.retryOtp) {
-      window.retryOtp("text", handleResendSuccess as any, handleResendFailure as any, otpRequestId);
+      window.retryOtp("text", handleResendSuccess, handleResendFailure, otpRequestId);
       return;
     }
     if (!window.sendOtp) {
@@ -189,6 +190,7 @@ export default function AdminSignInPage() {
   }, [clearOtp, normalizedPhone, otpRequestId, resendCountdown, widgetReady]);
 
   const handleVerifyOTP = useCallback(() => {
+    if (verifyInFlightRef.current) return;
     setError("");
     if (otp.length !== OTP_LENGTH) {
       setError("Please enter the complete 6-digit OTP.");
@@ -204,39 +206,49 @@ export default function AdminSignInPage() {
     }
 
     setVerifyingOtp(true);
+    verifyInFlightRef.current = true;
     window.verifyOtp(
       otp,
       async (data: MSG91VerifySuccess) => {
-        const token = getTokenFromWidget(data);
-        const reqIdFromResponse = getReqIdFromWidgetData(data);
-        if (reqIdFromResponse) setOtpRequestId(reqIdFromResponse);
+        try {
+          const token = getTokenFromWidget(data);
+          const reqIdFromResponse = getReqIdFromWidgetData(data);
+          if (reqIdFromResponse) setOtpRequestId(reqIdFromResponse);
 
-        if (!token) {
-          setError("Verification failed: token not received.");
+          if (!token) {
+            setError("Verification failed: token not received.");
+            clearOtp();
+            return;
+          }
+
+          const result = await signIn("credentials", {
+            phone: normalizedPhone,
+            accessToken: token,
+            redirect: false,
+          });
+
+          if (!result?.ok) {
+            setError("Not authorized to access the admin dashboard.");
+            clearOtp();
+            return;
+          }
+
+          // Ensure session cookie is visible before route transition to avoid occasional middleware bounce.
+          await getSession();
+          router.replace("/admin");
+          router.refresh();
+        } catch {
+          setError("Could not complete login. Please try again.");
           clearOtp();
+        } finally {
           setVerifyingOtp(false);
-          return;
+          verifyInFlightRef.current = false;
         }
-
-        const result = await signIn("credentials", {
-          phone: normalizedPhone,
-          accessToken: token,
-          redirect: false,
-        });
-
-        if (result?.ok) {
-          setVerifyingOtp(false);
-          router.push("/admin");
-          return;
-        }
-
-        setVerifyingOtp(false);
-        setError("Not authorized to access the admin dashboard.");
-        clearOtp();
       },
       (err) => {
         setError(typeof err === "string" ? err : "Invalid OTP. Please try again.");
         setVerifyingOtp(false);
+        verifyInFlightRef.current = false;
         clearOtp();
       },
       otpRequestId

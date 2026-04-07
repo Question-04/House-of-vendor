@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useState } from "react";
 import { signOut, useSession } from "next-auth/react";
 
 const nav = [
@@ -23,10 +24,19 @@ function navLinkClass(active: boolean, mobile: boolean) {
 
 export default function AdminDashLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { data: session } = useSession();
+  const [refreshing, setRefreshing] = useState(false);
 
   const isActive = (href: string) =>
     pathname === href || (href !== "/admin" && Boolean(pathname?.startsWith(href)));
+
+  const handleRefresh = () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    router.refresh();
+    setTimeout(() => setRefreshing(false), 700);
+  };
 
   return (
     <div className="flex min-h-dvh flex-col bg-slate-50 text-slate-900 md:flex-row md:min-h-screen">
@@ -38,6 +48,14 @@ export default function AdminDashLayout({ children }: { children: React.ReactNod
             <p className="truncate text-sm font-semibold">Admin</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="rounded-lg border border-white/20 px-3 py-2 text-xs font-medium text-slate-100 hover:bg-white/10 disabled:opacity-60"
+            >
+              {refreshing ? "Refreshing..." : "Refresh"}
+            </button>
             <Link
               href="/"
               className="rounded-lg border border-white/20 px-3 py-2 text-xs font-medium text-slate-100 hover:bg-white/10"
@@ -87,9 +105,17 @@ export default function AdminDashLayout({ children }: { children: React.ReactNod
         </nav>
         <div className="border-t border-white/10 p-3 text-xs text-slate-400">
           <p className="truncate font-medium text-slate-300">{session?.user?.phone}</p>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="mt-2 block w-full rounded-lg px-2 py-1.5 text-left text-slate-300 hover:bg-white/5 hover:text-white disabled:opacity-60"
+          >
+            {refreshing ? "Refreshing..." : "Refresh data"}
+          </button>
           <Link
             href="/"
-            className="mt-2 block rounded-lg px-2 py-1.5 text-left text-slate-300 hover:bg-white/5 hover:text-white"
+            className="mt-1 block rounded-lg px-2 py-1.5 text-left text-slate-300 hover:bg-white/5 hover:text-white"
           >
             Back to main site
           </Link>
