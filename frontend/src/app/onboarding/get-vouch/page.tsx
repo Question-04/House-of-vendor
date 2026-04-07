@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { generateVouchLink, getOnboardingStatus, getVouchStatus, reapplyAfterRejection } from "@/lib/api";
 import { getOnboardingPhone, setOnboardingPhone } from "@/lib/onboarding-session";
 import { normalizePhone } from "@/lib/msg91-widget";
@@ -94,6 +94,39 @@ function GetVouchPageContent() {
   const isCompleted = vouchCount >= target;
   const isNearComplete = vouchCount >= 20 && vouchCount < target;
 
+  const syncStatus = useCallback(
+    async (resolvedPhone: string): Promise<boolean> => {
+      const status = await getOnboardingStatus(resolvedPhone);
+      if (status.success && status.nextStep) {
+        if (status.nextStep === "profile") {
+          router.replace(`/onboarding/profile?phone=${encodeURIComponent(resolvedPhone)}`);
+          return true;
+        }
+        if (status.nextStep === "verification") {
+          router.replace(`/onboarding/verification?phone=${encodeURIComponent(resolvedPhone)}`);
+          return true;
+        }
+        if (status.nextStep === "done") {
+          router.replace("/home");
+          return true;
+        }
+      }
+      const vouch = await getVouchStatus(resolvedPhone);
+      if (vouch.success) {
+        setVouchCount(vouch.vouchCount || 0);
+        setTarget(vouch.target || 30);
+        setShareUrl(vouch.shareUrl || "");
+        setReviewStatus(vouch.reviewStatus || "pending");
+        setReapplyAfter(vouch.reapplyAfter || "");
+        setError("");
+      } else {
+        setError(vouch.message || "Could not load vouch status.");
+      }
+      return false;
+    },
+    [router]
+  );
+
   useEffect(() => {
     const phoneFromUrl = searchParams.get("phone") || "";
     const fromSession = getOnboardingPhone();
@@ -107,37 +140,19 @@ function GetVouchPageContent() {
     setOnboardingPhone(resolvedPhone);
 
     const init = async () => {
-      const status = await getOnboardingStatus(resolvedPhone);
-      if (!status.success || !status.nextStep) {
-        setLoading(false);
-        return;
-      }
-      if (status.nextStep === "profile") {
-        router.replace(`/onboarding/profile?phone=${encodeURIComponent(resolvedPhone)}`);
-        return;
-      }
-      if (status.nextStep === "verification") {
-        router.replace(`/onboarding/verification?phone=${encodeURIComponent(resolvedPhone)}`);
-        return;
-      }
-      if (status.nextStep === "done") {
-        router.replace("/home");
-        return;
-      }
-      const vouch = await getVouchStatus(resolvedPhone);
-      if (vouch.success) {
-        setVouchCount(vouch.vouchCount || 0);
-        setTarget(vouch.target || 30);
-        setShareUrl(vouch.shareUrl || "");
-        setReviewStatus(vouch.reviewStatus || "pending");
-        setReapplyAfter(vouch.reapplyAfter || "");
-      } else {
-        setError(vouch.message || "Could not load vouch status.");
-      }
+      await syncStatus(resolvedPhone);
       setLoading(false);
     };
     void init();
-  }, [router, searchParams]);
+  }, [router, searchParams, syncStatus]);
+
+  useEffect(() => {
+    if (!phone || loading) return;
+    const id = window.setInterval(() => {
+      void syncStatus(phone);
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [loading, phone, syncStatus]);
 
   const handleGenerateLink = async () => {
     if (!phone) return;
