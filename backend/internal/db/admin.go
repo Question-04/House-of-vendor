@@ -123,12 +123,25 @@ func (d *DB) GetAdminStats(ctx context.Context) (*AdminStats, error) {
 	}
 	if err := d.db.GetContext(ctx, &s.PendingVouchReviews, `
 		SELECT COUNT(1)
-		FROM vendor_vouch_step vv
-		WHERE vv.review_status = 'pending'
-		  AND (
-		    vv.step_status = 'completed'
-		    OR (SELECT COUNT(1) FROM vendor_vouch_entries vve WHERE vve.vendor_user_id = vv.vendor_user_id) >= $1
-		  )
+		FROM (
+			SELECT
+				vu.id AS vendor_user_id,
+				COALESCE(vv.review_status, 'pending') AS review_status,
+				COALESCE(
+					vv.step_status,
+					CASE WHEN vc.vouch_count >= $1 THEN 'completed' ELSE 'pending' END
+				) AS step_status,
+				vc.vouch_count
+			FROM vendor_users vu
+			LEFT JOIN vendor_vouch_step vv ON vv.vendor_user_id = vu.id
+			LEFT JOIN (
+				SELECT vendor_user_id, COUNT(1) AS vouch_count
+				FROM vendor_vouch_entries
+				GROUP BY vendor_user_id
+			) vc ON vc.vendor_user_id = vu.id
+		) q
+		WHERE q.review_status = 'pending'
+		  AND (q.step_status = 'completed' OR COALESCE(q.vouch_count, 0) >= $1)
 	`, VouchTarget); err != nil {
 		return nil, err
 	}
@@ -234,18 +247,29 @@ func (d *DB) ListVouchReviewQueue(ctx context.Context) ([]AdminVouchQueueRow, er
 	err := d.db.SelectContext(ctx, &rows, `
 		SELECT
 			vu.phone,
-			vv.vendor_user_id,
-			(SELECT COUNT(1) FROM vendor_vouch_entries vve WHERE vve.vendor_user_id = vv.vendor_user_id) AS vouch_count,
+			vu.id AS vendor_user_id,
+			COALESCE(vc.vouch_count, 0) AS vouch_count,
 			COALESCE(vp.full_name, '') AS vendor_name,
-			vv.review_status,
-			vv.step_status
-		FROM vendor_vouch_step vv
-		INNER JOIN vendor_users vu ON vu.id = vv.vendor_user_id
-		LEFT JOIN vendor_profile_step vp ON vp.vendor_user_id = vv.vendor_user_id
-		WHERE vv.review_status = 'pending'
+			COALESCE(vv.review_status, 'pending') AS review_status,
+			COALESCE(
+				vv.step_status,
+				CASE WHEN COALESCE(vc.vouch_count, 0) >= $1 THEN 'completed' ELSE 'pending' END
+			) AS step_status
+		FROM vendor_users vu
+		LEFT JOIN vendor_vouch_step vv ON vv.vendor_user_id = vu.id
+		LEFT JOIN vendor_profile_step vp ON vp.vendor_user_id = vu.id
+		LEFT JOIN (
+			SELECT vendor_user_id, COUNT(1) AS vouch_count
+			FROM vendor_vouch_entries
+			GROUP BY vendor_user_id
+		) vc ON vc.vendor_user_id = vu.id
+		WHERE COALESCE(vv.review_status, 'pending') = 'pending'
 		  AND (
-		    vv.step_status = 'completed'
-		    OR (SELECT COUNT(1) FROM vendor_vouch_entries vve2 WHERE vve2.vendor_user_id = vv.vendor_user_id) >= $1
+		    COALESCE(
+		    	vv.step_status,
+		    	CASE WHEN COALESCE(vc.vouch_count, 0) >= $1 THEN 'completed' ELSE 'pending' END
+		    ) = 'completed'
+		    OR COALESCE(vc.vouch_count, 0) >= $1
 		  )
 		ORDER BY vu.id DESC
 	`, VouchTarget)
