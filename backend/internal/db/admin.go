@@ -122,9 +122,14 @@ func (d *DB) GetAdminStats(ctx context.Context) (*AdminStats, error) {
 		return nil, err
 	}
 	if err := d.db.GetContext(ctx, &s.PendingVouchReviews, `
-		SELECT COUNT(1) FROM vendor_vouch_step
-		WHERE step_status = 'completed' AND review_status = 'pending'
-	`); err != nil {
+		SELECT COUNT(1)
+		FROM vendor_vouch_step vv
+		WHERE vv.review_status = 'pending'
+		  AND (
+		    vv.step_status = 'completed'
+		    OR (SELECT COUNT(1) FROM vendor_vouch_entries vve WHERE vve.vendor_user_id = vv.vendor_user_id) >= $1
+		  )
+	`, VouchTarget); err != nil {
 		return nil, err
 	}
 	if err := d.db.GetContext(ctx, &s.OpenTickets, `
@@ -237,10 +242,13 @@ func (d *DB) ListVouchReviewQueue(ctx context.Context) ([]AdminVouchQueueRow, er
 		FROM vendor_vouch_step vv
 		INNER JOIN vendor_users vu ON vu.id = vv.vendor_user_id
 		LEFT JOIN vendor_profile_step vp ON vp.vendor_user_id = vv.vendor_user_id
-		WHERE vv.step_status = 'completed'
-		  AND vv.review_status = 'pending'
+		WHERE vv.review_status = 'pending'
+		  AND (
+		    vv.step_status = 'completed'
+		    OR (SELECT COUNT(1) FROM vendor_vouch_entries vve2 WHERE vve2.vendor_user_id = vv.vendor_user_id) >= $1
+		  )
 		ORDER BY vu.id DESC
-	`)
+	`, VouchTarget)
 	return rows, err
 }
 

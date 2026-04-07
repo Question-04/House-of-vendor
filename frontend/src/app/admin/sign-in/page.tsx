@@ -76,6 +76,40 @@ export default function AdminSignInPage() {
     });
   }, []);
 
+  const handleOtpChange = useCallback((index: number, rawValue: string) => {
+    const cleaned = rawValue.replace(/\D/g, "");
+    if (!cleaned) {
+      setOtpDigits((prev) => {
+        const next = [...prev];
+        next[index] = "";
+        return next;
+      });
+      return;
+    }
+    // iOS/Android OTP autofill can inject the full code into one input.
+    if (cleaned.length > 1) {
+      const chunk = cleaned.slice(0, OTP_LENGTH).split("");
+      setOtpDigits((prev) => {
+        const next = [...prev];
+        for (let i = 0; i < OTP_LENGTH; i++) next[i] = chunk[i] || "";
+        return next;
+      });
+      requestAnimationFrame(() => {
+        otpRefs.current[Math.min(chunk.length, OTP_LENGTH - 1)]?.focus();
+      });
+      return;
+    }
+    const digit = cleaned.slice(-1);
+    setOtpDigits((prev) => {
+      const next = [...prev];
+      next[index] = digit;
+      return next;
+    });
+    if (index < OTP_LENGTH - 1) {
+      requestAnimationFrame(() => otpRefs.current[index + 1]?.focus());
+    }
+  }, []);
+
   const handleGetOTP = useCallback(() => {
     setError("");
     if (!normalizedPhone) {
@@ -121,6 +155,18 @@ export default function AdminSignInPage() {
     };
 
     const handleResendFailure = (err: unknown) => {
+      // Some MSG91 flows need sendOtp when retryOtp reqId is stale/missing.
+      if (window.sendOtp) {
+        window.sendOtp(
+          normalizedPhone,
+          (data) => handleResendSuccess(data),
+          (sendErr) => {
+            setError(typeof sendErr === "string" ? sendErr : "Could not resend OTP.");
+            setResendingOtp(false);
+          }
+        );
+        return;
+      }
       setError(typeof err === "string" ? err : "Could not resend OTP.");
       setResendingOtp(false);
     };
@@ -266,17 +312,19 @@ export default function AdminSignInPage() {
                     value={d}
                     inputMode="numeric"
                     pattern="[0-9]*"
+                    autoComplete={idx === 0 ? "one-time-code" : "off"}
+                    name={idx === 0 ? "otp" : `otp-${idx}`}
                     onChange={(e) => {
-                      const v = e.target.value.replace(/\D/g, "").slice(-1);
-                      setOtpDigits((prev) => {
-                        const next = [...prev];
-                        next[idx] = v;
-                        return next;
-                      });
-                      if (v && idx < OTP_LENGTH - 1) otpRefs.current[idx + 1]?.focus();
+                      handleOtpChange(idx, e.target.value);
+                    }}
+                    onPaste={(e) => {
+                      e.preventDefault();
+                      handleOtpChange(idx, e.clipboardData.getData("text"));
                     }}
                     onKeyDown={(e) => {
                       if (e.key === "Backspace" && !otpDigits[idx] && idx > 0) otpRefs.current[idx - 1]?.focus();
+                      if (e.key === "ArrowLeft" && idx > 0) otpRefs.current[idx - 1]?.focus();
+                      if (e.key === "ArrowRight" && idx < OTP_LENGTH - 1) otpRefs.current[idx + 1]?.focus();
                     }}
                     className={`h-12 w-10 rounded-lg border text-center text-lg font-semibold ${
                       isDark ? "border-white/15 bg-white/10 text-white" : "border-slate-200 bg-white text-slate-900"
