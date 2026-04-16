@@ -24,6 +24,7 @@ func NewInventoryHandler(database *db.DB) *InventoryHandler {
 type CreateInventoryRequest struct {
 	VendorPhone        string `json:"vendorPhone"`
 	ProductID          string `json:"productId"`
+	SKUID              string `json:"skuId"`
 	Category           string `json:"category"`
 	Size               string `json:"size"`
 	PurchasePriceCents *int64 `json:"purchasePriceCents"`
@@ -86,6 +87,7 @@ func (h *InventoryHandler) CreateInventory(w http.ResponseWriter, r *http.Reques
 	row := db.VendorInventoryRow{
 		VendorPhone:        req.VendorPhone,
 		ProductID:          req.ProductID,
+		SKUID:              ptrTrim(req.SKUID),
 		Category:           req.Category,
 		Size:               size,
 		PurchasePriceCents: req.PurchasePriceCents,
@@ -303,7 +305,7 @@ func (h *InventoryHandler) DeleteInventory(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
-// GetListings handles GET /api/listings?productId=&category=&size= (for main site price feed).
+// GetListings handles GET /api/listings?category=&skuId=&productId=&size= (for main site price feed).
 // When size is omitted: returns all live listings for that product+category (all sizes), each with "size" so the main site can filter in the UI.
 // When size is provided: returns only listings for that size.
 // Response shape: { vendorId, vendorName?, price (INR), inventoryId?, size }.
@@ -312,20 +314,37 @@ func (h *InventoryHandler) GetListings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	skuID := strings.TrimSpace(r.URL.Query().Get("skuId"))
 	productID := strings.TrimSpace(r.URL.Query().Get("productId"))
-	category := strings.TrimSpace(r.URL.Query().Get("category"))
+	category := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("category")))
 	sizeParam := strings.TrimSpace(r.URL.Query().Get("size"))
-	if productID == "" || category == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "message": "productId and category required"})
+	if category == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "message": "category required"})
+		return
+	}
+	normalizedSKU := db.NormalizeSKUID(ptrTrim(skuID))
+	skuValid := normalizedSKU != nil
+	// Handbags are SKU-first. Other categories continue productId matching.
+	useSKUFirst := category == "handbags"
+	if !useSKUFirst && productID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "message": "productId required"})
+		return
+	}
+	if useSKUFirst && !skuValid && productID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "message": "skuId or productId required for handbags"})
 		return
 	}
 	var rows []db.LiveListingRow
 	var err error
-	if sizeParam == "" {
-		// No size: return all listings for this product+category (main site filters by selected size in UI).
+	switch {
+	case useSKUFirst && skuValid && sizeParam == "":
+		rows, err = h.db.ListLiveListingsBySKUAllSizes(r.Context(), skuID, category)
+	case useSKUFirst && skuValid && sizeParam != "":
+		rows, err = h.db.ListLiveListingsBySKU(r.Context(), skuID, category, sizeParam)
+	case sizeParam == "":
+		// Fallback to productId (handbags without skuId, and all non-handbag categories).
 		rows, err = h.db.ListLiveListingsAllSizes(r.Context(), productID, category)
-	} else {
-		// Size provided: return only listings for that size.
+	default:
 		rows, err = h.db.ListLiveListings(r.Context(), productID, category, sizeParam)
 	}
 	if err != nil {
@@ -340,15 +359,27 @@ func (h *InventoryHandler) GetListings(w http.ResponseWriter, r *http.Request) {
 		if sizeVal == "" {
 			sizeVal = "OneSize"
 		}
-		priceINR := float64(row.ListedPriceCents) / 100.0
 		listings = append(listings, map[string]interface{}{
 			"vendorId":          row.VendorPhone,
 			"vendorName":        "House of Plutus",
-			"price":             priceINR,
+			"vendorDisplayName": "House of Plutus",
+			"price":             row.ListedPriceCents / 100,
 			"inventoryId":       row.InventoryID,
 			"size":              sizeVal,
+			"compareOnly":       false,
+			"sourceKey":         "vendor",
+			"vendorLogoUrl":     "",
 			"quantityRemaining": row.QuantityRemaining,
+			"skuId":             row.SKUID,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "vendorListings": listings})
+}
+
+func ptrTrim(v string) *string {
+	t := strings.TrimSpace(v)
+	if t == "" {
+		return nil
+	}
+	return &t
 }

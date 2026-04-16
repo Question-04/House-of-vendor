@@ -55,7 +55,7 @@ func main() {
 	otp := handler.NewOTPHandler(cfg, msg, database, r2Uploader)
 	products := handler.NewProductsHandler(database, r2Uploader)
 	inventory := handler.NewInventoryHandler(database)
-	orders := handler.NewOrdersHandler(database, r2Uploader)
+	orders := handler.NewOrdersHandler(database, r2Uploader, cfg.HOPAdminVendorPhone)
 	support := handler.NewSupportHandler(database, r2Uploader)
 	admin := handler.NewAdminHandler(cfg, database, r2Uploader)
 	productReq := handler.NewProductRequestsHandler(database)

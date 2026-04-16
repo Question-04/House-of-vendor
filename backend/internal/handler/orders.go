@@ -18,13 +18,18 @@ import (
 
 // OrdersHandler handles vendor orders APIs.
 type OrdersHandler struct {
-	db       *db.DB
-	uploader storage.Uploader
+	db                  *db.DB
+	uploader            storage.Uploader
+	hopAdminVendorPhone string
 }
 
 // NewOrdersHandler creates an orders handler. uploader may be nil (doc upload disabled).
-func NewOrdersHandler(database *db.DB, uploader storage.Uploader) *OrdersHandler {
-	return &OrdersHandler{db: database, uploader: uploader}
+func NewOrdersHandler(database *db.DB, uploader storage.Uploader, hopAdminVendorPhone string) *OrdersHandler {
+	return &OrdersHandler{
+		db:                  database,
+		uploader:            uploader,
+		hopAdminVendorPhone: strings.TrimSpace(hopAdminVendorPhone),
+	}
 }
 
 // ListOrders handles GET /api/orders?phone=.
@@ -428,8 +433,8 @@ func (h *OrdersHandler) CreateOrderFromMain(w http.ResponseWriter, r *http.Reque
 	req.ProductID = strings.TrimSpace(req.ProductID)
 	req.Category = strings.TrimSpace(strings.ToLower(req.Category))
 	req.ExternalOrderID = strings.TrimSpace(req.ExternalOrderID)
-	if req.VendorPhone == "" || req.ProductID == "" || req.Category == "" || req.ExternalOrderID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "message": "vendorPhone, productId, category, externalOrderId required"})
+	if req.ProductID == "" || req.Category == "" || req.ExternalOrderID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "message": "productId, category, externalOrderId required"})
 		return
 	}
 	size := strings.TrimSpace(req.Size)
@@ -453,6 +458,10 @@ func (h *OrdersHandler) CreateOrderFromMain(w http.ResponseWriter, r *http.Reque
 	inventoryID := req.InventoryID
 	if inventoryID != nil && *inventoryID == 0 {
 		inventoryID = nil // avoid FK lookup for 0; store NULL
+	}
+	if inventoryID == nil || *inventoryID <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "message": "inventoryId is required for secure vendor routing"})
+		return
 	}
 	qty := req.Quantity
 	if qty < 1 {
@@ -478,8 +487,34 @@ func (h *OrdersHandler) CreateOrderFromMain(w http.ResponseWriter, r *http.Reque
 		OrderQuantity:   qty,
 	}
 	ctx := r.Context()
+	invRow, invErr := h.db.GetVendorInventoryByInventoryID(ctx, *inventoryID)
+	if invErr != nil {
+		log.Printf("[orders] create-from-main load inventory: %v", invErr)
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"success": false, "message": "Could not validate selected listing"})
+		return
+	}
+	if invRow == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "message": "Selected inventory listing not found"})
+		return
+	}
+	if invRow.ProductID != req.ProductID || strings.TrimSpace(strings.ToLower(invRow.Category)) != req.Category {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "message": "Selected inventory does not match product/category"})
+		return
+	}
+	// Never trust client vendorPhone; resolve vendor from inventory server-side.
+	resolvedVendorPhone := strings.TrimSpace(invRow.VendorPhone)
+	if req.Category == "handbags" && h.hopAdminVendorPhone != "" {
+		// Handbags route to HoP admin vendor account.
+		resolvedVendorPhone = h.hopAdminVendorPhone
+	}
+	if resolvedVendorPhone == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "message": "Could not resolve vendor for selected listing"})
+		return
+	}
+	row.VendorPhone = resolvedVendorPhone
+
 	// Idempotency: retries with same vendor+externalOrderId return the existing order.
-	if existing, err := h.db.GetVendorOrderByVendorAndExternal(ctx, req.VendorPhone, req.ExternalOrderID); err == nil && existing != nil {
+	if existing, err := h.db.GetVendorOrderByVendorAndExternal(ctx, resolvedVendorPhone, req.ExternalOrderID); err == nil && existing != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "orderId": existing.ID, "idempotent": true})
 		return
 	}
@@ -492,28 +527,26 @@ func (h *OrdersHandler) CreateOrderFromMain(w http.ResponseWriter, r *http.Reque
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if inventoryID != nil && *inventoryID > 0 {
-		reserved, rerr := h.db.TryReserveInventoryUnits(ctx, tx, *inventoryID, req.VendorPhone, qty)
-		if rerr != nil {
-			log.Printf("[orders] create-from-main reserve stock: %v", rerr)
-			writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"success": false, "message": "Could not reserve stock"})
-			return
-		}
-		if reserved == nil {
-			writeJSON(w, http.StatusConflict, map[string]interface{}{
-				"success": false,
-				"code":    "OUT_OF_STOCK",
-				"message": "This listing has no stock left or is no longer available. Refresh prices and try again.",
-			})
-			return
-		}
+	reserved, rerr := h.db.TryReserveInventoryUnits(ctx, tx, *inventoryID, resolvedVendorPhone, qty)
+	if rerr != nil {
+		log.Printf("[orders] create-from-main reserve stock: %v", rerr)
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"success": false, "message": "Could not reserve stock"})
+		return
+	}
+	if reserved == nil {
+		writeJSON(w, http.StatusConflict, map[string]interface{}{
+			"success": false,
+			"code":    "OUT_OF_STOCK",
+			"message": "This listing has no stock left or is no longer available. Refresh prices and try again.",
+		})
+		return
 	}
 
 	created, err := h.db.CreateVendorOrderTx(ctx, tx, row)
 	if err != nil {
 		if isDuplicateExternalOrderErr(err) {
 			// Another concurrent request already inserted this externalOrderId.
-			if existing, gerr := h.db.GetVendorOrderByVendorAndExternal(ctx, req.VendorPhone, req.ExternalOrderID); gerr == nil && existing != nil {
+			if existing, gerr := h.db.GetVendorOrderByVendorAndExternal(ctx, resolvedVendorPhone, req.ExternalOrderID); gerr == nil && existing != nil {
 				writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "orderId": existing.ID, "idempotent": true})
 				return
 			}

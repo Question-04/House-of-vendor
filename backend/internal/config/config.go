@@ -32,6 +32,8 @@ type Config struct {
 	AdminInternalSecret  string // optional; X-Admin-Internal-Secret for trusted callers (not browser)
 	// When set, CORS Allow-Origin is this value instead of * (tighten browser access to the API).
 	AdminCORSOrigin string
+	// Handbag integration controls.
+	HOPAdminVendorPhone string
 }
 
 func Load() *Config {
@@ -58,6 +60,7 @@ func Load() *Config {
 		AdminPhoneAllowlist: os.Getenv("ADMIN_PHONE_ALLOWLIST"),
 		AdminInternalSecret: os.Getenv("ADMIN_INTERNAL_SECRET"),
 		AdminCORSOrigin:     strings.TrimSpace(os.Getenv("ADMIN_CORS_ORIGIN")),
+		HOPAdminVendorPhone: strings.TrimSpace(os.Getenv("HOP_ADMIN_VENDOR_PHONE")),
 	}
 }
 

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -13,6 +14,7 @@ type VendorInventoryRow struct {
 	InventoryID        int        `db:"inventory_id" json:"inventoryId"`
 	VendorPhone        string     `db:"vendor_phone" json:"vendorPhone"`
 	ProductID          string     `db:"product_id" json:"productId"`
+	SKUID              *string    `db:"sku_id" json:"skuId,omitempty"`
 	Category           string     `db:"category" json:"category"`
 	Size               string     `db:"size" json:"size"`
 	PurchasePriceCents *int64     `db:"purchase_price_cents" json:"purchasePriceCents"`
@@ -52,18 +54,18 @@ func (d *DB) CreateVendorInventory(ctx context.Context, row VendorInventoryRow) 
 		qty = 1
 	}
 	query := `INSERT INTO vendor_inventory (
-		inventory_id, vendor_phone, product_id, category, size,
+		inventory_id, vendor_phone, product_id, sku_id, category, size,
 		purchase_price_cents, desired_payout_cents, listed_price_cents, final_payout_cents, profit_loss_cents,
 		pair_location, availability, box_condition, product_qty, purchase_date, place_of_purchase,
 		listing_status, sold_out, quantity_remaining
 	) VALUES (
-		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
+		$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
 	) RETURNING id, inventory_id, vendor_phone, product_id, category, size,
-		purchase_price_cents, desired_payout_cents, listed_price_cents, final_payout_cents, profit_loss_cents,
+		sku_id, purchase_price_cents, desired_payout_cents, listed_price_cents, final_payout_cents, profit_loss_cents,
 		pair_location, availability, box_condition, product_qty, purchase_date, place_of_purchase,
 		listing_status, sold_out, quantity_remaining, created_at, updated_at`
 	err = d.db.GetContext(ctx, &row, query,
-		row.InventoryID, row.VendorPhone, row.ProductID, row.Category, row.Size,
+		row.InventoryID, row.VendorPhone, row.ProductID, NormalizeSKUID(row.SKUID), row.Category, row.Size,
 		row.PurchasePriceCents, row.DesiredPayoutCents, row.ListedPriceCents, row.FinalPayoutCents, row.ProfitLossCents,
 		row.PairLocation, row.Availability, row.BoxCondition, row.ProductQty, row.PurchaseDate, row.PlaceOfPurchase,
 		row.ListingStatus, row.SoldOut, qty,
@@ -76,7 +78,7 @@ func (d *DB) CreateVendorInventory(ctx context.Context, row VendorInventoryRow) 
 
 // GetVendorInventoryByProduct returns the latest inventory row for vendor + product + category.
 func (d *DB) GetVendorInventoryByProduct(ctx context.Context, vendorPhone, productID, category string) (*VendorInventoryRow, error) {
-	query := `SELECT id, inventory_id, vendor_phone, product_id, category, size,
+	query := `SELECT id, inventory_id, vendor_phone, product_id, sku_id, category, size,
 		purchase_price_cents, desired_payout_cents, listed_price_cents, final_payout_cents, profit_loss_cents,
 		pair_location, availability, box_condition, product_qty, purchase_date, place_of_purchase,
 		listing_status, sold_out, quantity_remaining, created_at, updated_at
@@ -97,7 +99,7 @@ func (d *DB) GetVendorInventoryByProduct(ctx context.Context, vendorPhone, produ
 // GetVendorInventoryByInventoryID returns one inventory row by business inventory_id.
 // Used by orders flow to attach profit_loss_cents to completed orders.
 func (d *DB) GetVendorInventoryByInventoryID(ctx context.Context, inventoryID int) (*VendorInventoryRow, error) {
-	query := `SELECT id, inventory_id, vendor_phone, product_id, category, size,
+	query := `SELECT id, inventory_id, vendor_phone, product_id, sku_id, category, size,
 		purchase_price_cents, desired_payout_cents, listed_price_cents, final_payout_cents, profit_loss_cents,
 		pair_location, availability, box_condition, product_qty, purchase_date, place_of_purchase,
 		listing_status, sold_out, quantity_remaining, created_at, updated_at
@@ -117,7 +119,7 @@ func (d *DB) GetVendorInventoryByInventoryID(ctx context.Context, inventoryID in
 
 // ListVendorInventory returns all inventory rows for a vendor, newest first.
 func (d *DB) ListVendorInventory(ctx context.Context, vendorPhone string) ([]VendorInventoryRow, error) {
-	query := `SELECT id, inventory_id, vendor_phone, product_id, category, size,
+	query := `SELECT id, inventory_id, vendor_phone, product_id, sku_id, category, size,
 		purchase_price_cents, desired_payout_cents, listed_price_cents, final_payout_cents, profit_loss_cents,
 		pair_location, availability, box_condition, product_qty, purchase_date, place_of_purchase,
 		listing_status, sold_out, quantity_remaining, created_at, updated_at
@@ -155,11 +157,12 @@ func (d *DB) DeleteVendorInventory(ctx context.Context, id int) error {
 
 // LiveListingRow is one vendor listing for the main site price feed (Compare Price).
 type LiveListingRow struct {
-	VendorPhone         string `db:"vendor_phone" json:"vendorPhone"`
-	ListedPriceCents    int64  `db:"listed_price_cents" json:"listedPriceCents"`
-	InventoryID         int    `db:"inventory_id" json:"inventoryId"`
-	Size                string `db:"size" json:"size"`
-	QuantityRemaining   int    `db:"quantity_remaining" json:"quantityRemaining"`
+	VendorPhone       string  `db:"vendor_phone" json:"vendorPhone"`
+	ListedPriceCents  int64   `db:"listed_price_cents" json:"listedPriceCents"`
+	InventoryID       int     `db:"inventory_id" json:"inventoryId"`
+	Size              string  `db:"size" json:"size"`
+	QuantityRemaining int     `db:"quantity_remaining" json:"quantityRemaining"`
+	SKUID             *string `db:"sku_id" json:"skuId,omitempty"`
 }
 
 // normalizeCategory converts main site category (e.g. sneaker) to DB form (e.g. sneakers).
@@ -201,7 +204,7 @@ func (d *DB) ListLiveListingsAllSizes(ctx context.Context, productID, category s
 	productID = strings.TrimSpace(productID)
 	query := `SELECT vendor_phone, listed_price_cents, inventory_id,
 		TRIM(COALESCE(size, 'OneSize')) AS size,
-		quantity_remaining
+		quantity_remaining, sku_id
 		FROM vendor_inventory
 		WHERE product_id = $1 AND LOWER(TRIM(category)) = $2
 		  AND listing_status = 'list_now' AND (sold_out IS NOT TRUE)
@@ -229,24 +232,101 @@ func (d *DB) ListLiveListings(ctx context.Context, productID, category, size str
 	}
 	cat := normalizeCategory(category)
 	productID = strings.TrimSpace(productID)
-	size = strings.TrimSpace(size)
+	sizeLookup := normalizeSizeLookup(size)
 	query := `SELECT vendor_phone, listed_price_cents, inventory_id,
 		TRIM(COALESCE(size, 'OneSize')) AS size,
-		quantity_remaining
+		quantity_remaining, sku_id
 		FROM vendor_inventory
-		WHERE product_id = $1 AND LOWER(TRIM(category)) = $2 AND TRIM(COALESCE(size, 'OneSize')) = $3
+		WHERE product_id = $1 AND LOWER(TRIM(category)) = $2
+		  AND REPLACE(LOWER(TRIM(COALESCE(size, 'OneSize'))), ' ', '') = $3
 		  AND listing_status = 'list_now' AND (sold_out IS NOT TRUE)
 		  AND quantity_remaining > 0
 		  AND listed_price_cents IS NOT NULL AND listed_price_cents > 0
 		ORDER BY listed_price_cents ASC`
 	var rows []LiveListingRow
-	err := d.db.SelectContext(ctx, &rows, query, productID, cat, size)
+	err := d.db.SelectContext(ctx, &rows, query, productID, cat, sizeLookup)
 	if err != nil && isPreparedStatementGone(err) {
 		rows = nil
-		err = d.db.SelectContext(ctx, &rows, query, productID, cat, size)
+		err = d.db.SelectContext(ctx, &rows, query, productID, cat, sizeLookup)
 	}
 	if err != nil {
 		return nil, err
 	}
 	return rows, nil
+}
+
+var skuSanitizer = regexp.MustCompile(`[^A-Za-z0-9]+`)
+
+// NormalizeSKUID keeps only alphanumerics and uppercases for cross-source matching consistency.
+func NormalizeSKUID(sku *string) interface{} {
+	if sku == nil {
+		return nil
+	}
+	n := strings.ToUpper(strings.TrimSpace(*sku))
+	n = skuSanitizer.ReplaceAllString(n, "")
+	if n == "" {
+		return nil
+	}
+	return n
+}
+
+// ListLiveListingsBySKUAllSizes returns all live listings for a sku+category.
+func (d *DB) ListLiveListingsBySKUAllSizes(ctx context.Context, skuID, category string) ([]LiveListingRow, error) {
+	cat := normalizeCategory(category)
+	query := `SELECT vendor_phone, listed_price_cents, inventory_id,
+		TRIM(COALESCE(size, 'OneSize')) AS size,
+		quantity_remaining, sku_id
+		FROM vendor_inventory
+		WHERE sku_id = $1 AND LOWER(TRIM(category)) = $2
+		  AND listing_status = 'list_now' AND (sold_out IS NOT TRUE)
+		  AND quantity_remaining > 0
+		  AND listed_price_cents IS NOT NULL AND listed_price_cents > 0
+		ORDER BY size, listed_price_cents ASC`
+	var rows []LiveListingRow
+	err := d.db.SelectContext(ctx, &rows, query, NormalizeSKUID(&skuID), cat)
+	if err != nil && isPreparedStatementGone(err) {
+		rows = nil
+		err = d.db.SelectContext(ctx, &rows, query, NormalizeSKUID(&skuID), cat)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// ListLiveListingsBySKU returns all live listings for sku+category+size.
+func (d *DB) ListLiveListingsBySKU(ctx context.Context, skuID, category, size string) ([]LiveListingRow, error) {
+	if size == "" {
+		size = "OneSize"
+	}
+	cat := normalizeCategory(category)
+	sizeLookup := normalizeSizeLookup(size)
+	query := `SELECT vendor_phone, listed_price_cents, inventory_id,
+		TRIM(COALESCE(size, 'OneSize')) AS size,
+		quantity_remaining, sku_id
+		FROM vendor_inventory
+		WHERE sku_id = $1 AND LOWER(TRIM(category)) = $2
+		  AND REPLACE(LOWER(TRIM(COALESCE(size, 'OneSize'))), ' ', '') = $3
+		  AND listing_status = 'list_now' AND (sold_out IS NOT TRUE)
+		  AND quantity_remaining > 0
+		  AND listed_price_cents IS NOT NULL AND listed_price_cents > 0
+		ORDER BY listed_price_cents ASC`
+	var rows []LiveListingRow
+	err := d.db.SelectContext(ctx, &rows, query, NormalizeSKUID(&skuID), cat, sizeLookup)
+	if err != nil && isPreparedStatementGone(err) {
+		rows = nil
+		err = d.db.SelectContext(ctx, &rows, query, NormalizeSKUID(&skuID), cat, sizeLookup)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func normalizeSizeLookup(size string) string {
+	s := strings.TrimSpace(strings.ToLower(size))
+	if s == "" {
+		s = "onesize"
+	}
+	return strings.ReplaceAll(s, " ", "")
 }
