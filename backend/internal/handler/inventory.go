@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -54,6 +55,7 @@ func (h *InventoryHandler) CreateInventory(w http.ResponseWriter, r *http.Reques
 	req.VendorPhone = strings.TrimSpace(req.VendorPhone)
 	req.ProductID = strings.TrimSpace(req.ProductID)
 	req.Category = strings.TrimSpace(strings.ToLower(req.Category))
+	req.VendorPhone = normalizePhone(req.VendorPhone)
 	if req.VendorPhone == "" || req.ProductID == "" || req.Category == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "message": "vendorPhone, productId, and category required"})
 		return
@@ -133,6 +135,7 @@ func (h *InventoryHandler) GetInventory(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	phone := strings.TrimSpace(r.URL.Query().Get("phone"))
+	phone = normalizePhone(phone)
 	productID := strings.TrimSpace(r.URL.Query().Get("productId"))
 	category := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("category")))
 	if phone == "" || productID == "" || category == "" {
@@ -208,6 +211,7 @@ func (h *InventoryHandler) ListInventory(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	phone := strings.TrimSpace(r.URL.Query().Get("phone"))
+	phone = normalizePhone(phone)
 	if phone == "" {
 		writeJSON(w, http.StatusBadRequest, ListInventoryResponse{Success: false, Message: "phone required"})
 		return
@@ -352,6 +356,20 @@ func (h *InventoryHandler) GetListings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"success": false, "message": "Could not load listings"})
 		return
 	}
+	// Handbags are SKU-first, but older inventory rows may not yet have sku_id populated.
+	// If SKU lookup returns no rows and productId is provided, fall back to productId lookup.
+	if useSKUFirst && skuValid && len(rows) == 0 && productID != "" {
+		if sizeParam == "" {
+			rows, err = h.db.ListLiveListingsAllSizes(r.Context(), productID, category)
+		} else {
+			rows, err = h.db.ListLiveListings(r.Context(), productID, category, sizeParam)
+		}
+		if err != nil {
+			log.Printf("[listings] fallback by productId error: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"success": false, "message": "Could not load listings"})
+			return
+		}
+	}
 	// Map to main site contract: vendorId, price in INR, inventoryId, size (required for size grid).
 	listings := make([]map[string]interface{}, 0, len(rows))
 	for _, row := range rows {
@@ -359,6 +377,7 @@ func (h *InventoryHandler) GetListings(w http.ResponseWriter, r *http.Request) {
 		if sizeVal == "" {
 			sizeVal = "OneSize"
 		}
+		sourceKey := fmt.Sprintf("vendor:%s:%d", strings.TrimSpace(row.VendorPhone), row.InventoryID)
 		listings = append(listings, map[string]interface{}{
 			"vendorId":          row.VendorPhone,
 			"vendorName":        "House of Plutus",
@@ -367,7 +386,7 @@ func (h *InventoryHandler) GetListings(w http.ResponseWriter, r *http.Request) {
 			"inventoryId":       row.InventoryID,
 			"size":              sizeVal,
 			"compareOnly":       false,
-			"sourceKey":         "vendor",
+			"sourceKey":         sourceKey,
 			"vendorLogoUrl":     "",
 			"quantityRemaining": row.QuantityRemaining,
 			"skuId":             row.SKUID,

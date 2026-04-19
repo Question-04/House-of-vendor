@@ -78,15 +78,20 @@ func (d *DB) CreateVendorInventory(ctx context.Context, row VendorInventoryRow) 
 
 // GetVendorInventoryByProduct returns the latest inventory row for vendor + product + category.
 func (d *DB) GetVendorInventoryByProduct(ctx context.Context, vendorPhone, productID, category string) (*VendorInventoryRow, error) {
+	phoneLookup := normalizePhoneLookup(vendorPhone)
+	if phoneLookup == "" {
+		return nil, nil
+	}
 	query := `SELECT id, inventory_id, vendor_phone, product_id, sku_id, category, size,
 		purchase_price_cents, desired_payout_cents, listed_price_cents, final_payout_cents, profit_loss_cents,
 		pair_location, availability, box_condition, product_qty, purchase_date, place_of_purchase,
 		listing_status, sold_out, quantity_remaining, created_at, updated_at
 		FROM vendor_inventory
-		WHERE vendor_phone = $1 AND product_id = $2 AND category = $3
+		WHERE RIGHT(REGEXP_REPLACE(COALESCE(vendor_phone, ''), '[^0-9]', '', 'g'), 10) = $1
+		  AND product_id = $2 AND category = $3
 		ORDER BY created_at DESC LIMIT 1`
 	var row VendorInventoryRow
-	err := d.db.GetContext(ctx, &row, query, vendorPhone, productID, category)
+	err := d.db.GetContext(ctx, &row, query, phoneLookup, productID, category)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -119,15 +124,19 @@ func (d *DB) GetVendorInventoryByInventoryID(ctx context.Context, inventoryID in
 
 // ListVendorInventory returns all inventory rows for a vendor, newest first.
 func (d *DB) ListVendorInventory(ctx context.Context, vendorPhone string) ([]VendorInventoryRow, error) {
+	phoneLookup := normalizePhoneLookup(vendorPhone)
+	if phoneLookup == "" {
+		return []VendorInventoryRow{}, nil
+	}
 	query := `SELECT id, inventory_id, vendor_phone, product_id, sku_id, category, size,
 		purchase_price_cents, desired_payout_cents, listed_price_cents, final_payout_cents, profit_loss_cents,
 		pair_location, availability, box_condition, product_qty, purchase_date, place_of_purchase,
 		listing_status, sold_out, quantity_remaining, created_at, updated_at
 		FROM vendor_inventory
-		WHERE vendor_phone = $1
+		WHERE RIGHT(REGEXP_REPLACE(COALESCE(vendor_phone, ''), '[^0-9]', '', 'g'), 10) = $1
 		ORDER BY created_at DESC`
 	var rows []VendorInventoryRow
-	err := d.db.SelectContext(ctx, &rows, query, vendorPhone)
+	err := d.db.SelectContext(ctx, &rows, query, phoneLookup)
 	if err != nil {
 		return nil, err
 	}
@@ -329,4 +338,17 @@ func normalizeSizeLookup(size string) string {
 		s = "onesize"
 	}
 	return strings.ReplaceAll(s, " ", "")
+}
+
+func normalizePhoneLookup(phone string) string {
+	digits := make([]rune, 0, len(phone))
+	for _, c := range phone {
+		if c >= '0' && c <= '9' {
+			digits = append(digits, c)
+		}
+	}
+	if len(digits) < 10 {
+		return ""
+	}
+	return string(digits[len(digits)-10:])
 }

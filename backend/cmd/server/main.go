@@ -111,6 +111,8 @@ func main() {
 	http.HandleFunc("/api/inventory/mark-sold", inventory.UpdateSoldOut)
 	http.HandleFunc("/api/inventory/delete", inventory.DeleteInventory)
 	http.HandleFunc("/api/listings", inventory.GetListings)
+	// Backward-compatible alias used by main-site PDP integration.
+	http.HandleFunc("/api/vendor-listings", inventory.GetListings)
 	http.HandleFunc("/api/orders", orders.ListOrders)
 	http.HandleFunc("/api/orders/decision", orders.OrderDecision)
 	http.HandleFunc("/api/orders/tracking", orders.OrderTracking)
