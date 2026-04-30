@@ -25,52 +25,19 @@ var allowedCategories = map[string]bool{
 }
 
 // getProductsFromTable runs a single query for one category with LIMIT/OFFSET.
-// Only allowed categories are queried; each uses its own table so results are always from that category.
+// Runtime listing source of truth is search_products for all categories.
 func (d *DB) getProductsFromTable(ctx context.Context, category string, limit, offset int) ([]ProductCard, error) {
 	category = strings.TrimSpace(strings.ToLower(category))
 	if !allowedCategories[category] {
-		return nil, nil // not allowed: return empty, do not query search_products (avoids wrong category)
+		return nil, nil
 	}
-
-	var query string
-	var args []interface{}
-
-	switch category {
-	case "sneakers":
-		query = `SELECT id::text, 'sneakers' AS category, brand, product_name AS name,
-			COALESCE((images)[1], '') AS first_image, NULL::text AS price
-			FROM sneakers ORDER BY id LIMIT $1 OFFSET $2`
-		args = []interface{}{limit, offset}
-	case "apparel":
-		query = `SELECT id::text, 'apparel' AS category, brand, product_name AS name,
-			COALESCE((images)[1], '') AS first_image, NULL::text AS price
-			FROM apparel ORDER BY id LIMIT $1 OFFSET $2`
-		args = []interface{}{limit, offset}
-	case "accessories":
-		query = `SELECT id::text, 'accessories' AS category, brand, product_name AS name,
-			COALESCE((images)[1], '') AS first_image, NULL::text AS price
-			FROM accessories ORDER BY id LIMIT $1 OFFSET $2`
-		args = []interface{}{limit, offset}
-	case "perfumes":
-		query = `SELECT id::text, 'perfumes' AS category, brand, title AS name,
-			COALESCE((images)[1], '') AS first_image, NULL::text AS price
-			FROM perfumes ORDER BY id LIMIT $1 OFFSET $2`
-		args = []interface{}{limit, offset}
-	case "watches":
-		// Watches table: id, brand, name, images, sale_price, link (no product_name column).
-		query = `SELECT id::text, 'watches' AS category, brand, name,
-			COALESCE((images)[1], '') AS first_image, sale_price::text AS price
-			FROM watches ORDER BY id LIMIT $1 OFFSET $2`
-		args = []interface{}{limit, offset}
-	case "handbags":
-		query = `SELECT id::text, 'handbags' AS category, brand, product_name AS name,
-			COALESCE((images)[1], '') AS first_image, sale_price::text AS price
-			FROM handbags ORDER BY id LIMIT $1 OFFSET $2`
-		args = []interface{}{limit, offset}
-	default:
-		// Only allowed categories reach here; unknown = return empty (no cross-category fallback)
-		return []ProductCard{}, nil
-	}
+	query := `SELECT product_id AS id, category, brand, name,
+		COALESCE((images)[1], '') AS first_image, price::text AS price
+		FROM search_products
+		WHERE category = $1
+		ORDER BY updated_at DESC, product_id DESC
+		LIMIT $2 OFFSET $3`
+	args := []interface{}{category, limit, offset}
 
 	var out []ProductCard
 	err := d.db.SelectContext(ctx, &out, query, args...)
@@ -83,6 +50,7 @@ func (d *DB) GetCategoryPage(ctx context.Context, category string, limit, offset
 }
 
 // GetProductByID returns a single product by category and id (for product detail page).
+// Runtime PDP source of truth is search_products.
 func (d *DB) GetProductByID(ctx context.Context, category, id string) (*ProductCard, error) {
 	category = strings.TrimSpace(strings.ToLower(category))
 	if !allowedCategories[category] {
@@ -92,42 +60,12 @@ func (d *DB) GetProductByID(ctx context.Context, category, id string) (*ProductC
 	if id == "" {
 		return nil, nil
 	}
-	var query string
-	var args []interface{}
-	switch category {
-	case "sneakers":
-		query = `SELECT id::text, 'sneakers' AS category, brand, product_name AS name,
-			COALESCE((images)[1], '') AS first_image, NULL::text AS price
-			FROM sneakers WHERE id::text = $1 LIMIT 1`
-		args = []interface{}{id}
-	case "apparel":
-		query = `SELECT id::text, 'apparel' AS category, brand, product_name AS name,
-			COALESCE((images)[1], '') AS first_image, NULL::text AS price
-			FROM apparel WHERE id::text = $1 LIMIT 1`
-		args = []interface{}{id}
-	case "accessories":
-		query = `SELECT id::text, 'accessories' AS category, brand, product_name AS name,
-			COALESCE((images)[1], '') AS first_image, NULL::text AS price
-			FROM accessories WHERE id::text = $1 LIMIT 1`
-		args = []interface{}{id}
-	case "perfumes":
-		query = `SELECT id::text, 'perfumes' AS category, brand, title AS name,
-			COALESCE((images)[1], '') AS first_image, NULL::text AS price
-			FROM perfumes WHERE id::text = $1 LIMIT 1`
-		args = []interface{}{id}
-	case "watches":
-		query = `SELECT id::text, 'watches' AS category, brand, name,
-			COALESCE((images)[1], '') AS first_image, sale_price::text AS price
-			FROM watches WHERE id::text = $1 LIMIT 1`
-		args = []interface{}{id}
-	case "handbags":
-		query = `SELECT id::text, 'handbags' AS category, brand, product_name AS name,
-			COALESCE((images)[1], '') AS first_image, sale_price::text AS price
-			FROM handbags WHERE id::text = $1 LIMIT 1`
-		args = []interface{}{id}
-	default:
-		return nil, nil
-	}
+	query := `SELECT product_id AS id, category, brand, name,
+		COALESCE((images)[1], '') AS first_image, price::text AS price
+		FROM search_products
+		WHERE category = $1 AND product_id = $2
+		LIMIT 1`
+	args := []interface{}{category, id}
 	var out ProductCard
 	err := d.db.GetContext(ctx, &out, query, args...)
 	if err != nil {
@@ -177,37 +115,15 @@ func (d *DB) GetProductCardsBatch(ctx context.Context, pairs []struct{ Category,
 }
 
 func (d *DB) selectProductCardsByIDs(ctx context.Context, category string, ids []string) ([]ProductCard, error) {
-	var query string
-	switch category {
-	case "sneakers":
-		query = `SELECT id::text, 'sneakers' AS category, brand, product_name AS name,
-			COALESCE((images)[1], '') AS first_image, NULL::text AS price
-			FROM sneakers WHERE id::text = ANY($1)`
-	case "apparel":
-		query = `SELECT id::text, 'apparel' AS category, brand, product_name AS name,
-			COALESCE((images)[1], '') AS first_image, NULL::text AS price
-			FROM apparel WHERE id::text = ANY($1)`
-	case "accessories":
-		query = `SELECT id::text, 'accessories' AS category, brand, product_name AS name,
-			COALESCE((images)[1], '') AS first_image, NULL::text AS price
-			FROM accessories WHERE id::text = ANY($1)`
-	case "perfumes":
-		query = `SELECT id::text, 'perfumes' AS category, brand, title AS name,
-			COALESCE((images)[1], '') AS first_image, NULL::text AS price
-			FROM perfumes WHERE id::text = ANY($1)`
-	case "watches":
-		query = `SELECT id::text, 'watches' AS category, brand, name,
-			COALESCE((images)[1], '') AS first_image, sale_price::text AS price
-			FROM watches WHERE id::text = ANY($1)`
-	case "handbags":
-		query = `SELECT id::text, 'handbags' AS category, brand, product_name AS name,
-			COALESCE((images)[1], '') AS first_image, sale_price::text AS price
-			FROM handbags WHERE id::text = ANY($1)`
-	default:
+	if !allowedCategories[category] {
 		return nil, nil
 	}
+	query := `SELECT product_id AS id, category, brand, name,
+		COALESCE((images)[1], '') AS first_image, price::text AS price
+		FROM search_products
+		WHERE category = $1 AND product_id = ANY($2)`
 	var list []ProductCard
-	err := d.db.SelectContext(ctx, &list, query, pq.Array(ids))
+	err := d.db.SelectContext(ctx, &list, query, category, pq.Array(ids))
 	return list, err
 }
 
